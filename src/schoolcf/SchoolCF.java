@@ -17,6 +17,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import javax.swing.JEditorPane;
 import javax.swing.JFileChooser;
+import javax.swing.JOptionPane;
 import javax.swing.UIManager;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
@@ -29,14 +30,14 @@ import javax.swing.text.StyleConstants;
  */
 public class SchoolCF extends javax.swing.JFrame {
     
-    private static final String HOME_PATH = "E:\\Downloads\\SchoolRelated\\HK2_19-20\\Java\\SchoolCF\\code\\";
-    
+    // Constants for tab indices
     private static final int SOURCE_INDEX = 0;
     private static final int INPUT_INDEX = 1;
     private static final int TEST_GEN_INDEX = 2;
     private static final int TEST_SOURCE_INDEX = 3;
     private static final int TEMPLATE_INDEX = 4;
     
+    // Constants for console format
     private static final int FORMAT_NONE = 0;
     private static final int FORMAT_SUCCESS = 1;
     private static final int FORMAT_WARNING = 2;
@@ -46,6 +47,12 @@ public class SchoolCF extends javax.swing.JFrame {
     private static final boolean FORMAT_ITALIC = true;
     private static final boolean FORMAT_NO_ITALIC = false;
     
+    // Default compiler and file save path
+    private String codePath = System.getProperty("user.dir") + "\\code\\";
+    private String compilerPath = "C:\\MinGW\\bin\\g++";
+    
+    // Names for source, input, test generator, test source and template files
+    // These files when saved will have .cpp extension except for inp (no file extension)
     private static final String[] EDITOR_FILES = {
         "source",
         "inp",
@@ -54,12 +61,18 @@ public class SchoolCF extends javax.swing.JFrame {
         "template"
     };
     
+    // Store JEditorPanes of all source tab so they can be accessed with EDITOR_PANES[INDEX]
+    // This makes saving and loading files easier
     private JEditorPane EDITOR_PANES[];
     
+    // User codeforces session that stores username, cookies and handles submitting code, checking status
     private UserSession user;
-    private Process runningProcess = null;
-    private String consoleString = "";
-    BufferedWriter processWriter = null;
+    
+    
+    private Process runningProcess = null; // Keep track of running process to terminate when needed
+    private String consoleString = ""; // Keep track of printed text on the console to avoid over-deleting (user deleting console's output)
+    BufferedWriter processWriter = null; // Input for runningProcess
+    private boolean testRunning = false; // Is the test case checking running
 
     /**
      * Creates new form SchoolCF
@@ -74,21 +87,23 @@ public class SchoolCF extends javax.swing.JFrame {
         cfDetailPanel.setVisible(false);
         processRunning(false);
         
-        jsyntaxpane.DefaultSyntaxKit.initKit();
+        // Tell the JEditorPanes to use cpp syntax
+        jsyntaxpane.DefaultSyntaxKit.initKit(); // Needed for jsyntaxpane package to works
         sourceEditorPane.setContentType("text/cpp");
         testGenEditorPane.setContentType("text/cpp");
         testSourceEditorPane.setContentType("text/cpp");
         
+        // Get all the JEditorPanes and keep track of them so they can be accessed later with INDEX
         EDITOR_PANES = new JEditorPane[EDITOR_FILES.length];
         EDITOR_PANES[SOURCE_INDEX] = sourceEditorPane;
         EDITOR_PANES[INPUT_INDEX] = inputEditorPane;
         EDITOR_PANES[TEST_GEN_INDEX] = testGenEditorPane;
         EDITOR_PANES[TEST_SOURCE_INDEX] = testSourceEditorPane;
         
-        boolean loadOk = true;
+        boolean loadOk = true; // Default file loading flag
         for (int i = EDITOR_FILES.length - 2; i >= 0; i--) {
             mainTabbedPane.setSelectedIndex(i);
-            loadOk = load(HOME_PATH + EDITOR_FILES[i] + (EDITOR_FILES[i].equals(EDITOR_FILES[INPUT_INDEX]) ? "" : ".cpp")) && loadOk;
+            loadOk = load(codePath + EDITOR_FILES[i] + (EDITOR_FILES[i].equals(EDITOR_FILES[INPUT_INDEX]) ? "" : ".cpp")) && loadOk;
         }
         
         
@@ -96,7 +111,7 @@ public class SchoolCF extends javax.swing.JFrame {
     }
     
     /**
-     * Print to console and virtual console
+     * Print to console and virtual console without formatting
      * @param message Message to print
      */
     private void printToConsole(String message) {
@@ -104,19 +119,34 @@ public class SchoolCF extends javax.swing.JFrame {
 //        consoleTextPane.setCaretPosition(consoleTextPane.getText().length());
         Document doc = consoleTextPane.getDocument();
         try {
+            // Insert line without formatting (new empty SimpleAttributeSet)
             doc.insertString(doc.getLength(), message + "\n", new SimpleAttributeSet());
         } catch (BadLocationException ex) {
-            consoleTextPane.setText("SchoolCF.printToConsole: " + ex.toString());
+            consoleTextPane.setText(consoleTextPane.getText() + "\nSchoolCF.printToConsole: " + ex.toString());
             System.out.println("SchoolCF.printToConsole: " + ex.toString());
         }
         
+        // Scroll and move caret to the end
         consoleScrollPane.getVerticalScrollBar().setValue(consoleScrollPane.getVerticalScrollBar().getMaximum());
         consoleTextPane.setCaretPosition(doc.getLength());
+        
+        // Update the printed console text
         this.consoleString = consoleTextPane.getText();
         
         System.out.println(message);
     }
     
+    /**
+     * Print to console with formatted text
+     *  - FORMAT_NONE: No formatting
+     *  - FORMAT_SUCCESS: Green text
+     *  - FORMAT_WARNING: Magenta text
+     *  - FORMAT_ERROR: Red text
+     * @param message Message to print
+     * @param format Format: FORMAT_NONE, FORMAT_SUCCESS, FORMAT_WARNING, FORMAT_ERROR
+     * @param bold Bold: FORMAT_BOLD, FORMAT_NO_BOLD
+     * @param italic Italic: FORMAT_ITALIC, FORMAT_NO_ITALIC
+     */
     private void printToConsole(String message, int format, boolean bold, boolean italic) {
         SimpleAttributeSet sas = new SimpleAttributeSet();
         
@@ -145,8 +175,11 @@ public class SchoolCF extends javax.swing.JFrame {
             System.out.println("SchoolCF.printToConsole: " + ex.toString());
         }
         
+        // Scroll and move caret to the end
         consoleScrollPane.getVerticalScrollBar().setValue(consoleScrollPane.getVerticalScrollBar().getMaximum()+1);
         consoleTextPane.setCaretPosition(doc.getLength());
+        
+        // Update the printed console text
         this.consoleString = consoleTextPane.getText();
         
         System.out.println(message);
@@ -210,6 +243,9 @@ public class SchoolCF extends javax.swing.JFrame {
         consolePreserveOutput = new javax.swing.JMenu();
         consoleClearBtn = new javax.swing.JMenuItem();
         preserveOutputMenuItem = new javax.swing.JCheckBoxMenuItem();
+        jMenu2 = new javax.swing.JMenu();
+        setCompilerMenuItem = new javax.swing.JMenuItem();
+        setFilePathMenuItem = new javax.swing.JMenuItem();
 
         setDefaultCloseOperation(javax.swing.WindowConstants.EXIT_ON_CLOSE);
 
@@ -529,6 +565,28 @@ public class SchoolCF extends javax.swing.JFrame {
 
         menuBar.add(consolePreserveOutput);
 
+        jMenu2.setText("Settings");
+
+        setCompilerMenuItem.setAccelerator(javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_P, java.awt.event.InputEvent.SHIFT_MASK | java.awt.event.InputEvent.CTRL_MASK));
+        setCompilerMenuItem.setText("Set compiler path...");
+        setCompilerMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                setCompilerMenuItemActionPerformed(evt);
+            }
+        });
+        jMenu2.add(setCompilerMenuItem);
+
+        setFilePathMenuItem.setAccelerator(javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.SHIFT_MASK | java.awt.event.InputEvent.CTRL_MASK));
+        setFilePathMenuItem.setText("Set save location...");
+        setFilePathMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                setFilePathMenuItemActionPerformed(evt);
+            }
+        });
+        jMenu2.add(setFilePathMenuItem);
+
+        menuBar.add(jMenu2);
+
         setJMenuBar(menuBar);
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(getContentPane());
@@ -552,25 +610,17 @@ public class SchoolCF extends javax.swing.JFrame {
     }// </editor-fold>//GEN-END:initComponents
 
     /**
-     * Save file to a default location (can't change location)
-     * @param fileName File to save: source, test_gen, test_source
-     * @return 
+     * Save file to default location set in "Set file path..." menu
+     * @param fileName File to save: source, inp, test_gen, test_source
+     * @return Boolean: true if the operation executed successfully
      */
     private boolean save(String filePath) {
-        if (mainTabbedPane.getSelectedIndex() != INPUT_INDEX) filePath += ".cpp";
+        // If the saving file (selected tab) is not input file and not ends in .cpp, add .cpp extension
+        if (mainTabbedPane.getSelectedIndex() != INPUT_INDEX && !filePath.substring(filePath.length()-4).equals(".cpp"))
+            filePath += ".cpp";
         
         try (FileWriter fileWriter = new FileWriter(filePath)) {
-            if (filePath.equals(EDITOR_FILES[INPUT_INDEX])) {
-                fileWriter.write(EDITOR_PANES[INPUT_INDEX].getText());
-            } else if (filePath.equals(EDITOR_FILES[SOURCE_INDEX])) {
-                fileWriter.write(EDITOR_PANES[SOURCE_INDEX].getText());
-            } else if (filePath.equals(EDITOR_FILES[TEST_GEN_INDEX])) {
-                fileWriter.write(EDITOR_PANES[TEST_GEN_INDEX].getText());
-            } else if (filePath.equals(EDITOR_FILES[TEST_SOURCE_INDEX])) {
-                fileWriter.write(EDITOR_PANES[TEST_SOURCE_INDEX].getText());
-            } else {
-                fileWriter.write(EDITOR_PANES[mainTabbedPane.getSelectedIndex()].getText());
-            }
+            fileWriter.write(EDITOR_PANES[mainTabbedPane.getSelectedIndex()].getText());
         } catch (IOException ex) {
             printToConsole("Problem saving file " + filePath, FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
             printToConsole(ex.toString(), FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
@@ -583,7 +633,7 @@ public class SchoolCF extends javax.swing.JFrame {
     /**
      * Load file to current active tab in TabbedPanel
      * @param filePath File to load
-     * @return 
+     * @return boolean: true if the file get loaded successfully
      */
     private boolean load(String filePath) {
         try {
@@ -628,7 +678,7 @@ public class SchoolCF extends javax.swing.JFrame {
         consoleTextPane.setEditable(on);
         
         if (!on) {
-            
+            // If there are any process output stream established, close it
             if (this.processWriter != null) {
                 try {
                     processWriter.close();
@@ -643,14 +693,17 @@ public class SchoolCF extends javax.swing.JFrame {
     }
     
     /**
-     * Compile the file with bash using g++ compiler, the output file name will the same as sourceFile
-     * sourceFile MUST NOT HAVE FILE EXTENSION
+     * Compile the file using g++ compiler, the output file name will the same as sourceFile
+     * sourceFile should have no extension or .cpp extension
+     * If verbose is true, print the compilation status
      * 
-     * @param sourceFile Name of source file (no extension)
+     * @param sourceFile Name of source file (no extension or .cpp extension)
+     * @param vebose Verbosity
      * @return Boolean value: true if the compilation succeeded
      */
     private boolean compile(String sourceFile, boolean verbose) {
         
+        // Clear the console if preserve console output menu item is not checked and verbosity is on
         if (!preserveOutputMenuItem.isSelected() && verbose) {
             consoleTextPane.setText("");
             this.consoleString = "";
@@ -658,20 +711,18 @@ public class SchoolCF extends javax.swing.JFrame {
         
         if (verbose) printToConsole("Compiling...", FORMAT_WARNING, FORMAT_BOLD, FORMAT_ITALIC);
         
+        // Default flag for compilation
         boolean ok = true;
         
-        if (save(HOME_PATH + EDITOR_FILES[mainTabbedPane.getSelectedIndex()])) {
+        if (save(codePath + EDITOR_FILES[mainTabbedPane.getSelectedIndex()])) {
             try{
+                // The command has the following format
+                // <compiler executable> -o<output file> <source file>
                 ProcessBuilder pBuilder = new ProcessBuilder(
-                        "C:\\MinGW\\bin\\g++",
-                        "-o" + HOME_PATH + sourceFile + ".exe",
-                        "" + HOME_PATH + sourceFile + ".cpp"
+                        this.compilerPath,
+                        "-o" + codePath + sourceFile + ".exe",
+                        "" + codePath + sourceFile + ".cpp"
                 );
-                
-//                ProcessBuilder pBuilder = new ProcessBuilder(
-//                        "bash",
-//                        "-c",
-//                        "\"cd /mnt/e/Downloads/SchoolRelated/HK2_19-20/Java/SchoolCF/code && g++ " + sourceFile + ".cpp -o " + sourceFile + "\"");
                 
                 pBuilder.redirectErrorStream(true);
                 
@@ -679,8 +730,10 @@ public class SchoolCF extends javax.swing.JFrame {
 //                terminateMenuItem.setEnabled(true);
                 processRunning(true);
 
+                // Get process output (process output is input in program's point of view)
                 BufferedReader reader = new BufferedReader(new InputStreamReader(this.runningProcess.getInputStream()));
 
+                // Read process output until it terminates
                 String line;
                 while (true) {
                     line = reader.readLine();
@@ -693,16 +746,20 @@ public class SchoolCF extends javax.swing.JFrame {
                 if (verbose) printToConsole("Problem compiling: " + ex.toString(), FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_NO_ITALIC);
                 ok = false;
             }
+        } else {
+            printToConsole("Problem saving file for compilation: " + codePath + EDITOR_FILES[mainTabbedPane.getSelectedIndex()]);
+            return false;
+        }
+        
+        if (verbose) {
+            if (ok && this.runningProcess != null)
+                printToConsole("\nCompiled successfully\n======================\n",FORMAT_SUCCESS, FORMAT_BOLD, FORMAT_ITALIC);
+            else
+                printToConsole("=== COMPILATION FAILED! ===", FORMAT_ERROR, FORMAT_BOLD, FORMAT_ITALIC);
         }
         
         
-//        terminateMenuItem.setEnabled(false);
-        
-        if (ok && this.runningProcess != null)
-            if (verbose) printToConsole("\nCompiled successfully\n======================\n",FORMAT_SUCCESS, FORMAT_BOLD, FORMAT_ITALIC);
-        else if (verbose) printToConsole("=== COMPILATION FAILED! ===", FORMAT_ERROR, FORMAT_BOLD, FORMAT_ITALIC);
-        
-        ok = ok && this.runningProcess != null;
+        ok = ok && (this.runningProcess != null);
         
         processRunning(false);
         
@@ -715,30 +772,27 @@ public class SchoolCF extends javax.swing.JFrame {
      * 
      * If inputFile is null, the process wait for input from virtual console (if any input needed)
      * If outputFile is null, the process output will be printed to console and virtual console
+     * If verbose is true, print the process status (and process's output if no outputFile specified)
      * 
      * @param sourceFile The binary file to run
      * @param inputFile Input file to get input from
      * @param outputFile Output file to redirect process output
+     * @param verbose Verbosity
      */
     private void runCode(String sourceFile, String inputFile, String outputFile, boolean verbose) {
         if (verbose) printToConsole("Running...\nOutput:", FORMAT_NONE, FORMAT_NO_BOLD, FORMAT_ITALIC);;
       
         try{
-//            ProcessBuilder pBuilder = new ProcessBuilder(
-//                    "E:\\Downloads\\SchoolRelated\\HK2_19-20\\Java\\SchoolCF\\source.exe"
-//            );
-            
-//            String command = "\"/mnt/e/Downloads/SchoolRelated/HK2_19-20/Java/SchoolCF/code/" + sourceFile;
-            String command = "\"" + HOME_PATH + sourceFile + ".exe";
-            
+            // Build the command
+            // The command has the following format <executable> < <input file> > <output file>
+            String command = "\"" + codePath + sourceFile + ".exe";
             if (inputFile != null) command += " < " + inputFile;
             if (outputFile != null) command += " > " + outputFile;
 
             command += "\"";
             
+            // The "cmd.exe /c" part will carry out the command specified by the string and then terminate
             ProcessBuilder pBuilder = new ProcessBuilder(
-//                    "bash",
-//                    "-c",
                     "cmd.exe",
                     "/c",
                     command
@@ -752,12 +806,13 @@ public class SchoolCF extends javax.swing.JFrame {
             
             processRunning(true);
             
-            // Process Outputstream (our point of view) is stdin from process point of view
+            // Process Outputstream (program's point of view) is stdin from process point of view
 //            OutputStream processInput = this.runningProcess.getOutputStream();
             this.processWriter = new BufferedWriter(new OutputStreamWriter(this.runningProcess.getOutputStream()));
+            // Get process output (process output is input in program's point of view)
             BufferedReader reader = new BufferedReader(new InputStreamReader(this.runningProcess.getInputStream()));
             
-            
+            // Read process output until it terminates
             String line;
             while (true) {
                 line = reader.readLine();
@@ -784,11 +839,13 @@ public class SchoolCF extends javax.swing.JFrame {
      */
     private void runTest(boolean compiling) {
         
+        // Clear the console if preserve console output menu item is not checked
         if (!preserveOutputMenuItem.isSelected()) {
             consoleTextPane.setText("");
             this.consoleString = "";
         }
         
+        // Number of test cases to run
         int numberOfTest = 30;
         printToConsole("Preparing test cases...", FORMAT_NONE, FORMAT_BOLD, FORMAT_NO_ITALIC);
         printToConsole("Number of test cases: " + numberOfTest, FORMAT_NONE, FORMAT_NO_BOLD, FORMAT_NO_ITALIC);
@@ -797,7 +854,10 @@ public class SchoolCF extends javax.swing.JFrame {
         
         processRunning(true);
         
+        // Compile source, test generator and test source if required
         if (compiling) {
+            mainTabbedPane.setSelectedIndex(TEST_GEN_INDEX);
+            save(codePath + this.EDITOR_FILES[mainTabbedPane.getSelectedIndex()]);
             printToConsole("Compiling test case generator...", FORMAT_WARNING, FORMAT_BOLD, FORMAT_ITALIC);
             if (!compile(EDITOR_FILES[TEST_GEN_INDEX], false)) {
                 printToConsole("\nProblem compiling test case generator.", FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
@@ -805,6 +865,8 @@ public class SchoolCF extends javax.swing.JFrame {
                 return;
             }
             
+            mainTabbedPane.setSelectedIndex(SOURCE_INDEX);
+            save(codePath + this.EDITOR_FILES[mainTabbedPane.getSelectedIndex()]);
             printToConsole("Compiling source code...", FORMAT_WARNING, FORMAT_BOLD, FORMAT_ITALIC);
             if (!compile(EDITOR_FILES[SOURCE_INDEX], false)) {
                 printToConsole("\nProblem compiling source file.", FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
@@ -812,6 +874,8 @@ public class SchoolCF extends javax.swing.JFrame {
                 return;
             }
             
+            mainTabbedPane.setSelectedIndex(TEST_SOURCE_INDEX);
+            save(codePath + this.EDITOR_FILES[mainTabbedPane.getSelectedIndex()]);
             printToConsole("Compiling test source code...", FORMAT_WARNING, FORMAT_BOLD, FORMAT_ITALIC);
             if (!compile(EDITOR_FILES[TEST_SOURCE_INDEX], false)) {
                 printToConsole("\nProblem compiling test source file.", FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
@@ -822,29 +886,38 @@ public class SchoolCF extends javax.swing.JFrame {
             printToConsole("");
         }
 
-        boolean ok = true;
+        boolean ok = true; // Default verdict flag
+        this.testRunning = true; // The test is now running
         
-        String testInPath = HOME_PATH + "test_inp";
-        String testOutPath = HOME_PATH + "test_out";
-        String outPath = HOME_PATH + "out";
+        // Path for input and output files for test cases
+        String testInPath = codePath + "test_inp";
+        String testOutPath = codePath + "test_out";
+        String outPath = codePath + "out";
         
-        for (int i = 1; i <= numberOfTest; i++) {
+        for (int i = 1; i <= numberOfTest && this.testRunning; i++) {
+            // Run the test generator to generate input
             runCode(EDITOR_FILES[TEST_GEN_INDEX], null, testInPath, false);
+            
+            // Run the sources to get output based on generated input
             runCode(EDITOR_FILES[SOURCE_INDEX], testInPath, outPath, false);
             runCode(EDITOR_FILES[TEST_SOURCE_INDEX], testInPath, testOutPath, false);
             
-            printToConsole("Running test case " + i + "...", FORMAT_NONE, FORMAT_NO_BOLD, FORMAT_NO_ITALIC);
+            if (this.testRunning) printToConsole("Running test case " + i + "...", FORMAT_NONE, FORMAT_NO_BOLD, FORMAT_NO_ITALIC);
             
             try{
-//                ProcessBuilder pBuilder = new ProcessBuilder(
-//                        "bash",
-//                        "-c",
-//                        "\"cd /mnt/e/Downloads/SchoolRelated/HK2_19-20/Java/SchoolCF/code &&  diff out test_out\"");
-
+                // Compare the two output files
+                // Command has the following format
+                // cmd.exe /c fc <output file> <test output file> > fc.out || echo err
+                // -------------------------------------------
+                // fc (file compare) compare the two files, output then redirect to fc.out so no output will be printed out
+                // if the fc exit status is 0 (two files are the same) the command after || won't be executed
+                // otherwise the word "err" will be echoed
+                // -------------------------------------------
+                // The "cmd.exe /c" part will carry out the command specified by the string and then terminate
                 ProcessBuilder pBuilder = new ProcessBuilder(
                         "cmd.exe",
                         "/c",
-                        "fc " + testOutPath + " " + outPath + " > " + HOME_PATH + "fc.out" + " || echo err");
+                        "fc " + testOutPath + " " + outPath + " > " + codePath + "fc.out" + " || echo err");
                 
                 pBuilder.redirectErrorStream(true);
                 
@@ -852,6 +925,8 @@ public class SchoolCF extends javax.swing.JFrame {
 
                 BufferedReader reader = new BufferedReader(new InputStreamReader(this.runningProcess.getInputStream()));
 
+                // Read the process output, there should be no output
+                // If there are any, it should be the word "err", which means the two files are different
                 String line;
                 while (true) {
                     line = reader.readLine();
@@ -864,7 +939,7 @@ public class SchoolCF extends javax.swing.JFrame {
                 ok = false;
             }
             
-            if (!ok) {
+            if (!ok && this.testRunning) {
                 printToConsole("WRONG ANSWER on test " + i + "! (Check input for the wrong test case)", FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
                 mainTabbedPane.setSelectedIndex(INPUT_INDEX);
                 load(testInPath);
@@ -872,9 +947,12 @@ public class SchoolCF extends javax.swing.JFrame {
             }
         }
         
-        printToConsole("");
-        if (ok) printToConsole("ALL TEST CASES PASSED", FORMAT_SUCCESS, FORMAT_BOLD, FORMAT_NO_ITALIC);
-        else printToConsole("--- WRONG ANSWER ---", FORMAT_ERROR, FORMAT_BOLD, FORMAT_NO_ITALIC);
+        if (this.testRunning) {
+            printToConsole("");
+            if (ok) printToConsole("ALL TEST CASES PASSED", FORMAT_SUCCESS, FORMAT_BOLD, FORMAT_NO_ITALIC);
+            else printToConsole("--- WRONG ANSWER ---", FORMAT_ERROR, FORMAT_BOLD, FORMAT_NO_ITALIC);
+        }
+        
         
         
         processRunning(false);
@@ -886,17 +964,6 @@ public class SchoolCF extends javax.swing.JFrame {
      * @param evt 
      */
     private void compileMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_compileMenuItemActionPerformed
-        // TODO add your handling code here:
-//        new Thread(new Runnable() {
-//            @Override
-//            public void run() {
-//                if (compile()) {
-//                   runCode();
-//                }
-//            }
-//            
-//        }).start();
-
         new Thread(() -> {
             if (compile(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], true)) {
                 runCode(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], null, null, true);
@@ -907,14 +974,19 @@ public class SchoolCF extends javax.swing.JFrame {
 
     }//GEN-LAST:event_compileMenuItemActionPerformed
 
+    /**
+     * Save the current active tab content to corresponding file in codePath
+     * @param evt 
+     */
     private void saveMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_saveMenuItemActionPerformed
-        // TODO add your handling code here:
-        save(HOME_PATH + this.EDITOR_FILES[mainTabbedPane.getSelectedIndex()]);
+        save(codePath + this.EDITOR_FILES[mainTabbedPane.getSelectedIndex()]);
     }//GEN-LAST:event_saveMenuItemActionPerformed
 
+    /**
+     * Login to codeforces
+     * @param evt 
+     */
     private void loginBtnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_loginBtnActionPerformed
-        // TODO add your handling code here:
-        
         new Thread(() -> {
             loginBtn.setText("Logging in...");
             loginBtn.setEnabled(false);
@@ -934,15 +1006,17 @@ public class SchoolCF extends javax.swing.JFrame {
     }//GEN-LAST:event_loginBtnActionPerformed
 
     private void logoutBtnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_logoutBtnActionPerformed
-        // TODO add your handling code here:
         user = new UserSession();
         cfDetailPanel.setVisible(false);
         cfLoginPanel.setVisible(true);
         passwordField.setText("");
     }//GEN-LAST:event_logoutBtnActionPerformed
 
+    /**
+     * Get the latest submission verdict
+     * @param evt 
+     */
     private void statusBtnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_statusBtnActionPerformed
-        // TODO add your handling code here:
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -961,9 +1035,12 @@ public class SchoolCF extends javax.swing.JFrame {
         }).start();
     }//GEN-LAST:event_statusBtnActionPerformed
 
+    /**
+     * Send current active tab content to corresponding problem on codeforces with problem ID from Problem ID text field
+     * @param evt 
+     */
     private void submitBtnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_submitBtnActionPerformed
-        // TODO add your handling code here:
-        
+            
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -974,6 +1051,7 @@ public class SchoolCF extends javax.swing.JFrame {
                 
                 if (user.submit(problemCodeField.getText(), sourceEditorPane.getText())) {
                     printToConsole("Solution for problem " + problemCodeField.getText() + " was submitted", FORMAT_SUCCESS, FORMAT_NO_BOLD, FORMAT_ITALIC);
+                    // Get the verdict once every 2 seconds, 5 times
                     for (int i = 0; i < 5; i++) {
                         try {
                             Thread.sleep(2000);
@@ -995,16 +1073,23 @@ public class SchoolCF extends javax.swing.JFrame {
         }).start();
     }//GEN-LAST:event_submitBtnActionPerformed
 
+    /**
+     * Terminate the current running process
+     * @param evt 
+     */
     private void terminateMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_terminateMenuItemActionPerformed
-        // TODO add your handling code here:
+        testRunning = false;
         this.runningProcess.destroy();
         processRunning(false);
 
         printToConsole("\n---- PROCESS TERMINATED ----\n", FORMAT_NONE, FORMAT_BOLD, FORMAT_NO_ITALIC);
     }//GEN-LAST:event_terminateMenuItemActionPerformed
 
+    /**
+     * Save the current active tab content to a file in desired location
+     * @param evt 
+     */
     private void saveAsMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_saveAsMenuItemActionPerformed
-        // TODO add your handling code here:
         JFileChooser fileChooser = new JFileChooser("C:\\Users\\KV\\Desktop");
         int choice = fileChooser.showSaveDialog(null);
         if (choice == JFileChooser.APPROVE_OPTION) {
@@ -1012,8 +1097,11 @@ public class SchoolCF extends javax.swing.JFrame {
         }
     }//GEN-LAST:event_saveAsMenuItemActionPerformed
 
+    /**
+     * Load content from file to current active tab
+     * @param evt 
+     */
     private void loadFileMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_loadFileMenuItemActionPerformed
-        // TODO add your handling code here:
         JFileChooser fileChooser = new JFileChooser("C:\\Users\\KV\\Desktop");
         int choice = fileChooser.showOpenDialog(null);
         if (choice == JFileChooser.APPROVE_OPTION) {
@@ -1021,8 +1109,12 @@ public class SchoolCF extends javax.swing.JFrame {
         }
     }//GEN-LAST:event_loadFileMenuItemActionPerformed
 
+    /**
+     * Capture the keys sent to consoleTextPane in order to send it to processWriter (process input stream)
+     * and preventing user from over-deleting console text
+     * @param evt 
+     */
     private void consoleTextPaneKeyPressed(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_consoleTextPaneKeyPressed
-        // TODO add your handling code here:
         switch(evt.getKeyCode()) {
             case KeyEvent.VK_ENTER:
                 try {
@@ -1039,6 +1131,7 @@ public class SchoolCF extends javax.swing.JFrame {
                 break;
             case KeyEvent.VK_BACK_SPACE:
                 if (this.consoleString.length() >= consoleTextPane.getText().length()) {
+                    // Add a padding so that when user hit backspace the appended 'a' will be deleted instead
                     consoleTextPane.setText(consoleTextPane.getText() + 'a');
                 }
                 break;
@@ -1051,60 +1144,110 @@ public class SchoolCF extends javax.swing.JFrame {
         }
     }//GEN-LAST:event_consoleTextPaneKeyPressed
 
+    /**
+     * Clear the console
+     * @param evt 
+     */
     private void consoleClearBtnActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_consoleClearBtnActionPerformed
-        // TODO add your handling code here:
         consoleTextPane.setText("");
         this.consoleString = "";
     }//GEN-LAST:event_consoleClearBtnActionPerformed
 
+    /**
+     * Compile and run current active tab source with input
+     * @param evt 
+     */
     private void compileInputMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_compileInputMenuItemActionPerformed
-        // TODO add your handling code here:
         new Thread(() -> {
             if (compile(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], true)) {
-                runCode(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], EDITOR_FILES[INPUT_INDEX], null, true);
+                runCode(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], codePath + EDITOR_FILES[INPUT_INDEX], null, true);
             } else {
                 printToConsole("\n--- ABORTED ----\n", FORMAT_ERROR, FORMAT_BOLD, FORMAT_NO_ITALIC);
             }
         }).start();
     }//GEN-LAST:event_compileInputMenuItemActionPerformed
 
+    /**
+     * Exit the application
+     * @param evt 
+     */
     private void exitMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_exitMenuItemActionPerformed
-        // TODO add your handling code here:
         System.exit(0);
     }//GEN-LAST:event_exitMenuItemActionPerformed
 
+    /**
+     * Run test without re-compiling
+     * @param evt 
+     */
     private void runTestMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_runTestMenuItemActionPerformed
-        // TODO add your handling code here:
         new Thread(()->{
             runTest(false);
         }).start();
     }//GEN-LAST:event_runTestMenuItemActionPerformed
 
+    /**
+     * Run current active tab without re-compiling
+     * @param evt 
+     */
     private void runMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_runMenuItemActionPerformed
-        // TODO add your handling code here:
         new Thread(() -> {
             runCode(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], null, null, true);
         }).start();
     }//GEN-LAST:event_runMenuItemActionPerformed
 
+    /**
+     * Compile and run tests
+     * @param evt 
+     */
     private void compileTestMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_compileTestMenuItemActionPerformed
-        // TODO add your handling code here:
         new Thread(()->{
             runTest(true);
         }).start();
     }//GEN-LAST:event_compileTestMenuItemActionPerformed
 
+    /**
+     * Run the current active tab without re-compiling
+     * @param evt 
+     */
     private void runInputMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_runInputMenuItemActionPerformed
-        // TODO add your handling code here:
         new Thread(() -> {
-            runCode(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], EDITOR_FILES[INPUT_INDEX], null, true);
+            runCode(EDITOR_FILES[mainTabbedPane.getSelectedIndex()], codePath + EDITOR_FILES[INPUT_INDEX], null, true);
         }).start();
     }//GEN-LAST:event_runInputMenuItemActionPerformed
 
+    /**
+     * Load content from template.cpp in codePath to current active tab
+     * @param evt 
+     */
     private void loadTemplateMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_loadTemplateMenuItemActionPerformed
-        // TODO add your handling code here:
-        load(HOME_PATH + EDITOR_FILES[TEMPLATE_INDEX] + ".cpp");
+        load(codePath + EDITOR_FILES[TEMPLATE_INDEX] + ".cpp");
     }//GEN-LAST:event_loadTemplateMenuItemActionPerformed
+
+    /**
+     * Change compiler path
+     * @param evt 
+     */
+    private void setCompilerMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_setCompilerMenuItemActionPerformed
+        JFileChooser fileChooser = new JFileChooser("C:");
+        fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        int choice = fileChooser.showOpenDialog(null);
+        if (choice == JFileChooser.APPROVE_OPTION) {
+            this.compilerPath = fileChooser.getSelectedFile().getAbsolutePath() + "\\g++";
+        }
+    }//GEN-LAST:event_setCompilerMenuItemActionPerformed
+
+    /**
+     * Change codePath (default location to save files)
+     * @param evt 
+     */
+    private void setFilePathMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_setFilePathMenuItemActionPerformed
+        JFileChooser fileChooser = new JFileChooser("C:");
+        fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+        int choice = fileChooser.showOpenDialog(null);
+        if (choice == JFileChooser.APPROVE_OPTION) {
+            this.codePath = fileChooser.getSelectedFile().getAbsolutePath() + "\\";
+        }
+    }//GEN-LAST:event_setFilePathMenuItemActionPerformed
 
     
     /**
@@ -1163,6 +1306,7 @@ public class SchoolCF extends javax.swing.JFrame {
     private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel4;
     private javax.swing.JMenu jMenu1;
+    private javax.swing.JMenu jMenu2;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JScrollPane jScrollPane3;
@@ -1185,6 +1329,8 @@ public class SchoolCF extends javax.swing.JFrame {
     private javax.swing.JMenuItem runTestMenuItem;
     private javax.swing.JMenuItem saveAsMenuItem;
     private javax.swing.JMenuItem saveMenuItem;
+    private javax.swing.JMenuItem setCompilerMenuItem;
+    private javax.swing.JMenuItem setFilePathMenuItem;
     private javax.swing.JSplitPane sideSplitPane;
     private javax.swing.JEditorPane sourceEditorPane;
     private javax.swing.JButton statusBtn;
