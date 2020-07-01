@@ -110,6 +110,26 @@ public class SchoolCF extends javax.swing.JFrame {
         if (!loadOk) printToConsole("Problem loading files.", FORMAT_ERROR, FORMAT_BOLD, FORMAT_NO_ITALIC);
     }
     
+    private void printToConsole(char c) {
+        Document doc = consoleTextPane.getDocument();
+        try {
+            // Insert line without formatting (new empty SimpleAttributeSet)
+            doc.insertString(doc.getLength(), Character.toString(c), new SimpleAttributeSet());
+        } catch (BadLocationException ex) {
+            consoleTextPane.setText(consoleTextPane.getText() + "\nSchoolCF.printToConsole: " + ex.toString());
+            System.out.println("SchoolCF.printToConsole: " + ex.toString());
+        }
+        
+        // Scroll and move caret to the end
+        consoleScrollPane.getVerticalScrollBar().setValue(consoleScrollPane.getVerticalScrollBar().getMaximum());
+        consoleTextPane.setCaretPosition(doc.getLength());
+        
+        // Update the printed console text
+        this.consoleString = consoleTextPane.getText();
+        
+        System.out.print(c);
+    }
+    
     /**
      * Print to console and virtual console without formatting
      * @param message Message to print
@@ -812,15 +832,17 @@ public class SchoolCF extends javax.swing.JFrame {
             // Get process output (process output is input in program's point of view)
             BufferedReader reader = new BufferedReader(new InputStreamReader(this.runningProcess.getInputStream()));
             
-            // Read process output until it terminates
-            String line;
+            // Read process output by character until it terminates
+            int c;
             while (true) {
-                line = reader.readLine();
-                if (line == null) break;
-                if (verbose) printToConsole(line);
+                c = reader.read();
+                if (c == -1) break;
+                if (verbose){
+                    printToConsole((char)c);
+                }
             }
             
-            if (verbose) printToConsole("---- Program ended ----\n", FORMAT_NONE, FORMAT_BOLD, FORMAT_NO_ITALIC);
+            if (verbose) printToConsole("\n---- Program ended ----\n", FORMAT_NONE, FORMAT_BOLD, FORMAT_NO_ITALIC);
         } catch (IOException ex) {
 //            System.out.println(ex.toString());
             if (verbose) printToConsole(ex.toString(), FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
@@ -991,13 +1013,18 @@ public class SchoolCF extends javax.swing.JFrame {
             loginBtn.setText("Logging in...");
             loginBtn.setEnabled(false);
             
-            if (user.login(handleField.getText(), new String(passwordField.getPassword()))) {
-                welcomeLabel.setText("Welcome " + user.getHandle() + "\n");
-                cfDetailPanel.setVisible(true);
-                cfLoginPanel.setVisible(false);
-            } else {
-                printToConsole("Login failed!", FORMAT_ERROR, FORMAT_BOLD, FORMAT_NO_ITALIC);
-                printToConsole("Wrong handle/email or password?\n", FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
+            try {
+                if (user.login(handleField.getText(), new String(passwordField.getPassword()))) {
+                    welcomeLabel.setText("Welcome " + user.getHandle() + "\n");
+                    cfDetailPanel.setVisible(true);
+                    cfLoginPanel.setVisible(false);
+                } else {
+                    printToConsole("Login failed!", FORMAT_ERROR, FORMAT_BOLD, FORMAT_NO_ITALIC);
+                    printToConsole("Wrong handle/email or password?\n", FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
+                }
+            } catch (IllegalArgumentException ex) {
+                printToConsole("Connection failed! Check your internet connection and make sure the site is connectable",
+                        FORMAT_ERROR, FORMAT_NO_BOLD, FORMAT_ITALIC);
             }
             
             loginBtn.setText("Log in");
@@ -1054,7 +1081,7 @@ public class SchoolCF extends javax.swing.JFrame {
                     // Get the verdict once every 2 seconds, 5 times
                     for (int i = 0; i < 5; i++) {
                         try {
-                            Thread.sleep(2000);
+                            Thread.sleep(1000);
                         } catch (InterruptedException ex) {
                             System.out.println(ex.toString());
                         }
